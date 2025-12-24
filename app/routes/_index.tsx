@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import type { Route } from "./+types/_index";
+import { useAuth } from "../context/AuthContext";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -22,6 +23,8 @@ export function loader() {
 }
 
 export default function Home() {
+  const { user } = useAuth();
+
   return (
     <div className="min-h-screen bg-warm-light">
       {/* Navigation */}
@@ -54,18 +57,29 @@ export default function Home() {
               </a>
             </div>
             <div className="flex items-center space-x-4">
-              <Link
-                to="/signin"
-                className="px-4 py-2 text-primary-700 hover:text-primary-900 transition text-sm rounded-md"
-              >
-                Sign in
-              </Link>
-              <Link
-                to="/signup"
-                className="px-4 py-2 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-sm"
-              >
-                Get Started
-              </Link>
+              {user ? (
+                <Link
+                  to="/dashboard"
+                  className="px-4 py-2 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-sm"
+                >
+                  Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    to="/signin"
+                    className="px-4 py-2 text-primary-700 hover:text-primary-900 transition text-sm rounded-md"
+                  >
+                    Sign in
+                  </Link>
+                  <Link
+                    to="/signup"
+                    className="px-4 py-2 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-sm"
+                  >
+                    Get Started
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>
