@@ -1,34 +1,30 @@
-import { Link, useNavigate, useLocation } from 'react-router';
+import { useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { getUserUnions, type Union } from '../utils/unions';
+import { DashboardSidebar } from '../components/DashboardSidebar';
 import { UserDropdown } from '../components/UserDropdown';
 import { UnionDropdown } from '../components/UnionDropdown';
-import { DashboardSidebar } from '../components/DashboardSidebar';
-import type { Route } from './+types/dashboard';
+import type { Route } from './+types/dashboard.grievances';
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: 'Dashboard - Union Simple' },
-    { name: 'description', content: 'Your Union Simple dashboard' },
+    { title: 'Grievances - Union Simple' },
+    { name: 'description', content: 'Manage union grievances' },
   ];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Don't require session in loader - let client-side handle it
-  // This prevents issues when session is in localStorage
   return new Response(
-    JSON.stringify({ unions: [] }),
+    JSON.stringify({}),
     { headers: { 'Content-Type': 'application/json' } }
   );
 }
 
-
-export default function Dashboard() {
+export default function Grievances() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const [unions, setUnions] = useState<Union[]>([]);
-  const [unionsLoading, setUnionsLoading] = useState(true);
   const [selectedUnionId, setSelectedUnionId] = useState<string | undefined>();
 
   useEffect(() => {
@@ -41,26 +37,21 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchUnions = async () => {
       if (user && !loading) {
-        setUnionsLoading(true);
         try {
           const userUnions = await getUserUnions(user.id);
           setUnions(userUnions);
-          // Set first union as selected by default
           if (userUnions.length > 0 && !selectedUnionId) {
             setSelectedUnionId(userUnions[0].id);
           }
         } catch (error) {
           console.error('Error fetching unions:', error);
-        } finally {
-          setUnionsLoading(false);
         }
       }
     };
-
     fetchUnions();
   }, [user, loading]);
 
-  if (loading || unionsLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-warm-light flex items-center justify-center">
         <div className="text-primary-700">Loading...</div>
@@ -72,18 +63,10 @@ export default function Dashboard() {
     return null;
   }
 
-  const location = useLocation();
-  const isHome = location.pathname === '/dashboard' || 
-    (location.pathname.startsWith('/dashboard') && !location.pathname.includes('/grievances') && !location.pathname.includes('/payments'));
-
   return (
     <div className="min-h-screen bg-warm-light flex">
-      {/* Sidebar */}
       <DashboardSidebar />
-
-      {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Navigation Bar */}
         <nav className="bg-white border-b border-primary-200">
           <div className="px-6 lg:px-8">
             <div className="flex justify-between items-center h-16">
@@ -99,27 +82,17 @@ export default function Dashboard() {
             </div>
           </div>
         </nav>
-
-        {/* Main Content */}
         <main className="flex-1 overflow-y-auto bg-warm-light">
           <div className="px-6 lg:px-8 py-8 md:py-8 pt-20 md:pt-8">
-            {isHome ? (
-              <div>
-                <div className="mb-8">
-                  <h1 className="text-4xl font-bold text-primary-900 mb-2">
-                    Home
-                  </h1>
-                  <p className="text-primary-700">
-                    Welcome to your union dashboard.
-                  </p>
-                </div>
-                {/* Home content will go here */}
-              </div>
-            ) : (
-              <div>
-                {/* Other sections will render here based on route */}
-              </div>
-            )}
+            <div className="mb-8">
+              <h1 className="text-4xl font-bold text-primary-900 mb-2">
+                Grievances
+              </h1>
+              <p className="text-primary-700">
+                Track and manage grievances
+              </p>
+            </div>
+            {/* Grievances content will go here */}
           </div>
         </main>
       </div>
