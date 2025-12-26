@@ -1,22 +1,55 @@
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { getUserUnions, type Union } from '../utils/unions';
 import { DashboardSidebar } from '../components/DashboardSidebar';
 import { UserDropdown } from '../components/UserDropdown';
 import { UnionDropdown } from '../components/UnionDropdown';
-import type { Route } from './+types/dashboard.grievances';
+import { createClient as createServerClient } from '../utils/supabase/server';
+import type { Route } from './+types/union.$slug.grievances';
 
-export function meta({}: Route.MetaArgs) {
+export function meta({ data }: Route.MetaArgs) {
+  let unionName = 'Union';
+  
+  // Try to get union name from loader data
+  if (data && typeof data === 'object' && data !== null) {
+    try {
+      const parsed = data as { unionName?: string };
+      if (parsed.unionName && typeof parsed.unionName === 'string') {
+        unionName = parsed.unionName;
+      }
+    } catch (e) {
+      // Fallback
+    }
+  }
+  
   return [
-    { title: 'Grievances - Union Simple' },
-    { name: 'description', content: 'Manage union grievances' },
+    { title: `${unionName} · Grievances · Union Simple` },
+    { name: 'description', content: `Manage ${unionName} grievances` },
   ];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, params }: Route.LoaderArgs) {
+  // Fetch union name for meta
+  let unionName: string | null = null;
+  
+  try {
+    const supabase = await createServerClient(request);
+    const { data: union } = await supabase
+      .from('unions')
+      .select('name')
+      .eq('slug', params.slug)
+      .single();
+    
+    if (union?.name) {
+      unionName = union.name; // Preserve exact casing from database
+    }
+  } catch (error) {
+    // Silently fail - union name is optional for meta
+  }
+  
   return new Response(
-    JSON.stringify({}),
+    JSON.stringify({ unionName }),
     { headers: { 'Content-Type': 'application/json' } }
   );
 }
@@ -24,8 +57,9 @@ export async function loader({ request }: Route.LoaderArgs) {
 export default function Grievances() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
   const [unions, setUnions] = useState<Union[]>([]);
-  const [selectedUnionId, setSelectedUnionId] = useState<string | undefined>();
+  const [selectedUnion, setSelectedUnion] = useState<Union | undefined>();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -40,8 +74,14 @@ export default function Grievances() {
         try {
           const userUnions = await getUserUnions(user.id);
           setUnions(userUnions);
-          if (userUnions.length > 0 && !selectedUnionId) {
-            setSelectedUnionId(userUnions[0].id);
+          
+          // Find union by slug
+          const unionBySlug = userUnions.find(u => u.slug === slug);
+          if (unionBySlug) {
+            setSelectedUnion(unionBySlug);
+          } else if (userUnions.length > 0) {
+            // If slug doesn't match, redirect to first union
+            navigate(`/union/${userUnions[0].slug}/grievances`, { replace: true });
           }
         } catch (error) {
           console.error('Error fetching unions:', error);
@@ -49,7 +89,17 @@ export default function Grievances() {
       }
     };
     fetchUnions();
-  }, [user, loading]);
+  }, [user, loading, slug, navigate]);
+
+  // Update selected union when slug changes
+  useEffect(() => {
+    if (slug && unions.length > 0) {
+      const unionBySlug = unions.find(u => u.slug === slug);
+      if (unionBySlug) {
+        setSelectedUnion(unionBySlug);
+      }
+    }
+  }, [slug, unions]);
 
   if (loading) {
     return (
@@ -65,7 +115,7 @@ export default function Grievances() {
 
   return (
     <div className="min-h-screen bg-warm-light flex">
-      <DashboardSidebar />
+      <DashboardSidebar unionSlug={slug} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <nav className="bg-white border-b border-primary-200">
           <div className="px-6 lg:px-8">
@@ -74,8 +124,13 @@ export default function Grievances() {
               <div className="flex items-center space-x-4">
                 <UnionDropdown 
                   unions={unions} 
-                  currentUnionId={selectedUnionId}
-                  onUnionSelect={setSelectedUnionId}
+                  currentUnionId={selectedUnion?.id}
+                  onUnionSelect={(unionId) => {
+                    const union = unions.find(u => u.id === unionId);
+                    if (union) {
+                      navigate(`/union/${union.slug}/grievances`);
+                    }
+                  }}
                 />
                 {user && <UserDropdown user={user} />}
               </div>

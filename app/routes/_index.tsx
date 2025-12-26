@@ -1,6 +1,9 @@
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/_index";
 import { useAuth } from "../context/AuthContext";
+import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { getFirstUnionSlug } from "../utils/unions";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -24,6 +27,18 @@ export function loader() {
 
 export default function Home() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+  const [dashboardPath, setDashboardPath] = useState<string>('/onboarding');
+
+  useEffect(() => {
+    const getDashboardPath = async () => {
+      if (user) {
+        const slug = await getFirstUnionSlug(user.id);
+        setDashboardPath(slug ? `/union/${slug}` : '/onboarding');
+      }
+    };
+    getDashboardPath();
+  }, [user]);
 
   return (
     <div className="min-h-screen bg-warm-light">
@@ -59,7 +74,7 @@ export default function Home() {
             <div className="flex items-center space-x-4">
               {user ? (
                 <Link
-                  to="/dashboard"
+                  to={dashboardPath}
                   className="px-4 py-2 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-sm"
                 >
                   Dashboard
@@ -100,15 +115,26 @@ export default function Home() {
               for unions, by people who understand unions.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              <Link
-                to="/signup"
-                className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
-              >
-                Get Started Free
-              </Link>
-              <button className="inline-flex items-center px-6 py-3 border border-primary-300 text-primary-700 rounded-md hover:bg-primary-50 transition text-base font-medium">
-                Watch Demo
-              </button>
+              {user ? (
+                <Link
+                  to={dashboardPath}
+                  className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
+                >
+                  Go to Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    to="/signup"
+                    className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
+                  >
+                    Get Started Free
+                  </Link>
+                  <button className="inline-flex items-center px-6 py-3 border border-primary-300 text-primary-700 rounded-md hover:bg-primary-50 transition text-base font-medium">
+                    Watch Demo
+                  </button>
+                </>
+              )}
             </div>
             <p className="text-sm text-primary-600 mt-6">
               No credit card required • Free 14-day trial
@@ -228,12 +254,21 @@ export default function Home() {
             Join unions across the country who trust Union Simple to manage their
             operations
           </p>
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
-          >
-            Get Started Free
-          </Link>
+          {user ? (
+            <Link
+              to={dashboardPath}
+              className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
+            >
+              Go to Dashboard
+            </Link>
+          ) : (
+            <Link
+              to="/signup"
+              className="inline-flex items-center px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition text-base font-medium"
+            >
+              Get Started Free
+            </Link>
+          )}
         </div>
       </section>
 

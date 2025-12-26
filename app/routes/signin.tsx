@@ -1,6 +1,8 @@
 import { Form, Link, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useState, useEffect } from 'react';
+import { getFirstUnionSlug } from '../utils/unions';
+import { supabase } from '../utils/supabase';
 import type { Route } from './+types/signin';
 
 export function meta({}: Route.MetaArgs) {
@@ -19,9 +21,17 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (user) {
-      navigate('/dashboard');
-    }
+    const redirectToDashboard = async () => {
+      if (user) {
+        const slug = await getFirstUnionSlug(user.id);
+        if (slug) {
+          navigate(`/union/${slug}`);
+        } else {
+          navigate('/onboarding');
+        }
+      }
+    };
+    redirectToDashboard();
   }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -35,7 +45,18 @@ export default function SignIn() {
       setError(error.message);
       setLoading(false);
     } else {
-      navigate('/dashboard');
+      // Get the user's first union slug
+      const { data: { user: signedInUser } } = await supabase.auth.getUser();
+      if (signedInUser) {
+        const slug = await getFirstUnionSlug(signedInUser.id);
+        if (slug) {
+          navigate(`/union/${slug}`);
+        } else {
+          navigate('/onboarding');
+        }
+      } else {
+        navigate('/onboarding');
+      }
     }
   };
 

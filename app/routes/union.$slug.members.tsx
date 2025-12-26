@@ -1,17 +1,31 @@
-import { Link, useLoaderData, useNavigate } from 'react-router';
+import { Link, useLoaderData, useNavigate, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
-import { supabase } from '../utils/supabase';
+import { createClient as createServerClient, getResponseHeaders } from '../utils/supabase/server';
 import { getAdminUnions, isUnionAdmin, getUserUnions, type Union } from '../utils/unions';
 import { DashboardSidebar } from '../components/DashboardSidebar';
 import { UserDropdown } from '../components/UserDropdown';
 import { UnionDropdown } from '../components/UnionDropdown';
-import type { Route } from './+types/members';
+import type { Route } from './+types/union.$slug.members';
 
-export function meta({}: Route.MetaArgs) {
+export function meta({ data }: Route.MetaArgs) {
+  let unionName = 'Union';
+  
+  // Try to get union name from loader data
+  if (data && typeof data === 'object' && data !== null) {
+    try {
+      const parsed = data as { currentUnion?: { name?: string } };
+      if (parsed.currentUnion?.name && typeof parsed.currentUnion.name === 'string') {
+        unionName = parsed.currentUnion.name;
+      }
+    } catch (e) {
+      // Fallback
+    }
+  }
+  
   return [
-    { title: 'Members - Union Simple' },
-    { name: 'description', content: 'Manage union members' },
+    { title: `${unionName} · Members · Union Simple` },
+    { name: 'description', content: `Manage ${unionName} members` },
   ];
 }
 
@@ -29,41 +43,64 @@ export interface Member {
   updated_at: string;
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { data: { session } } = await supabase.auth.getSession();
+export async function loader({ request, params }: Route.LoaderArgs) {
+  const supabase = await createServerClient(request);
+  const { data: { user } } = await supabase.auth.getUser();
+  const responseHeaders = getResponseHeaders(supabase);
   
-  if (!session) {
+  if (!user) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized' }),
       { 
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
       }
     );
   }
 
-  // Get user's admin unions
-  const adminUnions = await getAdminUnions(session.user.id);
+  // Get union by slug
+  const { data: unionBySlug } = await supabase
+    .from('unions')
+    .select('*')
+    .eq('slug', params.slug)
+    .single();
+
+  if (!unionBySlug) {
+    return new Response(
+      JSON.stringify({ error: 'Union not found' }),
+      { 
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
+      }
+    );
+  }
+
+  // Verify user is admin of this union using server client
+  const { data: unionCheck } = await supabase
+    .from('unions')
+    .select('created_by')
+    .eq('id', unionBySlug.id)
+    .single();
   
-  if (adminUnions.length === 0) {
+  const isAdmin = unionCheck?.created_by === user.id;
+  
+  if (!isAdmin) {
     return new Response(
       JSON.stringify({ 
         members: [],
         adminUnions: [],
-        error: 'You are not an admin of any union. Please create or join a union first.' 
+        currentUnion: unionBySlug, // Always include union for meta tag
+        error: 'You are not an admin of this union.' 
       }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) } }
     );
   }
 
-  // Get union IDs where user is admin
-  const unionIds = adminUnions.map(u => u.id);
-
-  // Fetch members for the user's unions (RLS will filter automatically, but we can also filter explicitly)
+  // Fetch members for this specific union
   const { data: members, error } = await supabase
     .from('members')
     .select('*')
-    .in('union_id', unionIds)
+    .eq('union_id', unionBySlug.id)
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -72,26 +109,63 @@ export async function loader({ request }: Route.LoaderArgs) {
       JSON.stringify({ error: 'Failed to fetch members', details: error.message }),
       { 
         status: 500,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
       }
     );
   }
 
   return new Response(
-    JSON.stringify({ members: members || [], adminUnions }),
-    { headers: { 'Content-Type': 'application/json' } }
+    JSON.stringify({ members: members || [], adminUnions: [unionBySlug], currentUnion: unionBySlug }),
+    { headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) } }
   );
 }
 
-export async function action({ request }: Route.ActionArgs) {
-  const { data: { session } } = await supabase.auth.getSession();
+export async function action({ request, params }: Route.ActionArgs) {
+  const supabase = await createServerClient(request);
+  const { data: { user } } = await supabase.auth.getUser();
+  const responseHeaders = getResponseHeaders(supabase);
   
-  if (!session) {
+  if (!user) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized' }),
       { 
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
+      }
+    );
+  }
+
+  // Get union by slug
+  const { data: unionBySlug } = await supabase
+    .from('unions')
+    .select('*')
+    .eq('slug', params.slug)
+    .single();
+
+  if (!unionBySlug) {
+    return new Response(
+      JSON.stringify({ error: 'Union not found' }),
+      { 
+        status: 404,
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
+      }
+    );
+  }
+
+  // Verify user is admin using server client
+  const { data: unionCheck } = await supabase
+    .from('unions')
+    .select('created_by')
+    .eq('id', unionBySlug.id)
+    .single();
+  
+  const isAdmin = unionCheck?.created_by === user.id;
+  if (!isAdmin) {
+    return new Response(
+      JSON.stringify({ error: 'You are not an admin of this union' }),
+      { 
+        status: 403,
+        headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
       }
     );
   }
@@ -109,6 +183,7 @@ export async function action({ request }: Route.ActionArgs) {
       member_number: formData.get('member_number') as string || null,
       status: (formData.get('status') as string) || 'active',
       date_joined: formData.get('date_joined') as string || null,
+      union_id: unionBySlug.id,
     };
 
     const { data, error } = await supabase
@@ -122,14 +197,14 @@ export async function action({ request }: Route.ActionArgs) {
         JSON.stringify({ error: 'Failed to create member', details: error.message }),
         { 
           status: 400,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
         }
       );
     }
 
     return new Response(
       JSON.stringify({ success: true, member: data }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) } }
     );
   }
 
@@ -149,6 +224,7 @@ export async function action({ request }: Route.ActionArgs) {
       .from('members')
       .update(memberData)
       .eq('id', id)
+      .eq('union_id', unionBySlug.id) // Ensure member belongs to this union
       .select()
       .single();
 
@@ -157,14 +233,14 @@ export async function action({ request }: Route.ActionArgs) {
         JSON.stringify({ error: 'Failed to update member', details: error.message }),
         { 
           status: 400,
-          headers: { 'Content-Type': 'application/json' }
+          headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
         }
       );
     }
 
     return new Response(
       JSON.stringify({ success: true, member: data }),
-      { headers: { 'Content-Type': 'application/json' } }
+      { headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) } }
     );
   }
 
@@ -172,7 +248,7 @@ export async function action({ request }: Route.ActionArgs) {
     JSON.stringify({ error: 'Invalid action' }),
     { 
       status: 400,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', ...Object.fromEntries(responseHeaders) }
     }
   );
 }
@@ -180,11 +256,13 @@ export async function action({ request }: Route.ActionArgs) {
 export default function Members() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
   const loaderData = useLoaderData<typeof loader>();
   const members = loaderData?.members || [];
   const adminUnions = loaderData?.adminUnions || [];
+  const currentUnion = loaderData?.currentUnion;
   const [unions, setUnions] = useState<Union[]>([]);
-  const [selectedUnionId, setSelectedUnionId] = useState<string | undefined>();
+  const [selectedUnion, setSelectedUnion] = useState<Union | undefined>();
 
   useEffect(() => {
     if (!loading && !user) {
@@ -199,8 +277,14 @@ export default function Members() {
         try {
           const userUnions = await getUserUnions(user.id);
           setUnions(userUnions);
-          if (userUnions.length > 0 && !selectedUnionId) {
-            setSelectedUnionId(userUnions[0].id);
+          
+          // Find union by slug
+          const unionBySlug = userUnions.find(u => u.slug === slug);
+          if (unionBySlug) {
+            setSelectedUnion(unionBySlug);
+          } else if (userUnions.length > 0) {
+            // If slug doesn't match, redirect to first union
+            navigate(`/union/${userUnions[0].slug}/members`, { replace: true });
           }
         } catch (error) {
           console.error('Error fetching unions:', error);
@@ -208,7 +292,17 @@ export default function Members() {
       }
     };
     fetchUnions();
-  }, [user, loading]);
+  }, [user, loading, slug, navigate]);
+
+  // Update selected union when slug changes
+  useEffect(() => {
+    if (slug && unions.length > 0) {
+      const unionBySlug = unions.find(u => u.slug === slug);
+      if (unionBySlug) {
+        setSelectedUnion(unionBySlug);
+      }
+    }
+  }, [slug, unions]);
 
   if (loading) {
     return (
@@ -226,7 +320,7 @@ export default function Members() {
   if (adminUnions.length === 0) {
     return (
       <div className="min-h-screen bg-warm-light flex">
-        <DashboardSidebar />
+        <DashboardSidebar unionSlug={slug} />
         <div className="flex-1 flex flex-col overflow-hidden">
           <nav className="bg-white border-b border-primary-200">
             <div className="px-6 lg:px-8">
@@ -235,8 +329,13 @@ export default function Members() {
                 <div className="flex items-center space-x-4">
                   <UnionDropdown 
                     unions={unions} 
-                    currentUnionId={selectedUnionId}
-                    onUnionSelect={setSelectedUnionId}
+                    currentUnionId={selectedUnion?.id}
+                    onUnionSelect={(unionId) => {
+                      const union = unions.find(u => u.id === unionId);
+                      if (union) {
+                        navigate(`/union/${union.slug}/members`);
+                      }
+                    }}
                   />
                   {user && <UserDropdown user={user} />}
                 </div>
@@ -253,10 +352,10 @@ export default function Members() {
                   You need to be a union administrator to manage members. Please create a union or ask to be added as an admin.
                 </p>
                 <Link
-                  to="/dashboard"
+                  to="/onboarding"
                   className="inline-block px-6 py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition font-medium"
                 >
-                  Go to Dashboard
+                  Create Union
                 </Link>
               </div>
             </div>
@@ -268,7 +367,7 @@ export default function Members() {
 
   return (
     <div className="min-h-screen bg-warm-light flex">
-      <DashboardSidebar />
+      <DashboardSidebar unionSlug={slug} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <nav className="bg-white border-b border-primary-200">
           <div className="px-6 lg:px-8">
@@ -277,8 +376,13 @@ export default function Members() {
               <div className="flex items-center space-x-4">
                 <UnionDropdown 
                   unions={unions} 
-                  currentUnionId={selectedUnionId}
-                  onUnionSelect={setSelectedUnionId}
+                  currentUnionId={selectedUnion?.id}
+                  onUnionSelect={(unionId) => {
+                    const union = unions.find(u => u.id === unionId);
+                    if (union) {
+                      navigate(`/union/${union.slug}/members`);
+                    }
+                  }}
                 />
                 {user && <UserDropdown user={user} />}
               </div>
@@ -295,14 +399,9 @@ export default function Members() {
             <p className="text-primary-700">
               Manage your union members
             </p>
-            {adminUnions.length > 0 && (
-              <p className="text-sm text-primary-600 mt-1">
-                Managing members for: {adminUnions.map(u => u.name).join(', ')}
-              </p>
-            )}
           </div>
           <Link
-            to="/members/new"
+            to={`/union/${slug}/members/new`}
             className="px-6 py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition font-medium"
           >
             Add Member
@@ -314,7 +413,7 @@ export default function Members() {
           <div className="bg-white rounded-lg border border-primary-200 p-12 text-center">
             <p className="text-primary-700 mb-4">No members yet.</p>
             <Link
-              to="/members/new"
+              to={`/union/${slug}/members/new`}
               className="inline-block px-6 py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 transition font-medium"
             >
               Add Your First Member
@@ -394,7 +493,7 @@ export default function Members() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <Link
-                          to={`/members/${member.id}/edit`}
+                          to={`/union/${slug}/members/${member.id}/edit`}
                           className="text-primary-600 hover:text-primary-900 mr-4"
                         >
                           Edit

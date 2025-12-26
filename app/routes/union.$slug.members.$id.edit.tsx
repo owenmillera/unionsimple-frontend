@@ -1,15 +1,29 @@
-import { Form, Link, useLoaderData, useNavigate, useActionData } from 'react-router';
+import { Form, Link, useLoaderData, useNavigate, useActionData, useParams } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useEffect } from 'react';
 import { supabase } from '../utils/supabase';
 import { isUnionAdmin } from '../utils/unions';
-import type { Route } from './+types/members.$id.edit';
-import type { Member } from './members';
+import type { Route } from './+types/union.$slug.members.$id.edit';
+import type { Member } from './union.$slug.members';
 
-export function meta({}: Route.MetaArgs) {
+export function meta({ data }: Route.MetaArgs) {
+  let unionName = 'Union';
+  
+  // Try to get union name from loader data
+  if (data && typeof data === 'object' && data !== null) {
+    try {
+      const parsed = data as { currentUnion?: { name?: string } };
+      if (parsed.currentUnion?.name && typeof parsed.currentUnion.name === 'string') {
+        unionName = parsed.currentUnion.name;
+      }
+    } catch (e) {
+      // Fallback
+    }
+  }
+  
   return [
-    { title: 'Edit Member - Union Simple' },
-    { name: 'description', content: 'Edit union member information' },
+    { title: `${unionName} · Edit Member · Union Simple` },
+    { name: 'description', content: `Edit member information for ${unionName}` },
   ];
 }
 
@@ -26,12 +40,30 @@ export async function loader({ params }: Route.LoaderArgs) {
     );
   }
 
-  const { id } = params;
+  const { id, slug } = params;
+
+  // Get union by slug first
+  const { data: unionBySlug } = await supabase
+    .from('unions')
+    .select('*')
+    .eq('slug', slug)
+    .single();
+
+  if (!unionBySlug) {
+    return new Response(
+      JSON.stringify({ error: 'Union not found' }),
+      { 
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+  }
 
   const { data: member, error } = await supabase
     .from('members')
     .select('*')
     .eq('id', id)
+    .eq('union_id', unionBySlug.id)
     .single();
 
   if (error || !member) {
@@ -45,21 +77,19 @@ export async function loader({ params }: Route.LoaderArgs) {
   }
 
   // Check if user is admin of this member's union
-  if (member.union_id) {
-    const isAdmin = await isUnionAdmin(session.user.id, member.union_id);
-    if (!isAdmin) {
-      return new Response(
-        JSON.stringify({ error: 'You are not authorized to edit this member' }),
-        { 
-          status: 403,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
+  const isAdmin = await isUnionAdmin(session.user.id, unionBySlug.id);
+  if (!isAdmin) {
+    return new Response(
+      JSON.stringify({ error: 'You are not authorized to edit this member' }),
+      { 
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
 
   return new Response(
-    JSON.stringify({ member }),
+    JSON.stringify({ member, currentUnion: unionBySlug }),
     { headers: { 'Content-Type': 'application/json' } }
   );
 }
@@ -77,13 +107,31 @@ export async function action({ request, params }: Route.ActionArgs) {
     );
   }
 
-  const { id } = params;
-  
-  // First, get the member to check union ownership
+  const { id, slug } = params;
+
+  // Get union by slug
+  const { data: unionBySlug } = await supabase
+    .from('unions')
+    .select('*')
+    .eq('slug', slug)
+    .single();
+
+  if (!unionBySlug) {
+    return new Response(
+      JSON.stringify({ error: 'Union not found' }),
+      { 
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
+  }
+
+  // First, get the member to verify it belongs to this union
   const { data: existingMember } = await supabase
     .from('members')
     .select('union_id')
     .eq('id', id)
+    .eq('union_id', unionBySlug.id)
     .single();
 
   if (!existingMember) {
@@ -97,17 +145,15 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   // Verify user is admin of this union
-  if (existingMember.union_id) {
-    const isAdmin = await isUnionAdmin(session.user.id, existingMember.union_id);
-    if (!isAdmin) {
-      return new Response(
-        JSON.stringify({ error: 'You are not authorized to edit this member' }),
-        { 
-          status: 403,
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-    }
+  const isAdmin = await isUnionAdmin(session.user.id, unionBySlug.id);
+  if (!isAdmin) {
+    return new Response(
+      JSON.stringify({ error: 'You are not authorized to edit this member' }),
+      { 
+        status: 403,
+        headers: { 'Content-Type': 'application/json' }
+      }
+    );
   }
 
   const formData = await request.formData();
@@ -127,6 +173,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     .from('members')
     .update(memberData)
     .eq('id', id)
+    .eq('union_id', unionBySlug.id)
     .select()
     .single();
 
@@ -149,6 +196,7 @@ export async function action({ request, params }: Route.ActionArgs) {
 export default function EditMember() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
+  const { slug } = useParams<{ slug: string }>();
   const loaderData = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const member = loaderData?.member as Member | undefined;
@@ -162,9 +210,9 @@ export default function EditMember() {
   // Handle successful form submission
   useEffect(() => {
     if (actionData?.success) {
-      navigate('/members');
+      navigate(`/union/${slug}/members`);
     }
-  }, [actionData, navigate]);
+  }, [actionData, navigate, slug]);
 
   if (loading) {
     return (
@@ -183,7 +231,7 @@ export default function EditMember() {
       <div className="min-h-screen bg-warm-light flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-primary-900 mb-2">Member not found</h1>
-          <Link to="/members" className="text-primary-600 hover:text-primary-900">
+          <Link to={`/union/${slug}/members`} className="text-primary-600 hover:text-primary-900">
             ← Back to Members
           </Link>
         </div>
@@ -203,11 +251,11 @@ export default function EditMember() {
         <div className="max-w-7xl mx-auto px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-6">
-              <Link to="/dashboard" className="text-lg font-semibold text-primary-900">
+              <Link to="/" className="text-lg font-semibold text-primary-900">
                 Union Simple
               </Link>
               <Link 
-                to="/members" 
+                to={`/union/${slug}/members`} 
                 className="text-sm font-medium text-primary-600 hover:text-primary-900"
               >
                 Members
@@ -218,10 +266,10 @@ export default function EditMember() {
                 {user.email}
               </span>
               <Link
-                to="/dashboard"
+                to={`/union/${slug}/members`}
                 className="px-4 py-2 text-primary-700 hover:text-primary-900 transition text-sm rounded-md"
               >
-                Dashboard
+                Members
               </Link>
             </div>
           </div>
@@ -232,7 +280,7 @@ export default function EditMember() {
       <div className="max-w-3xl mx-auto px-6 lg:px-8 py-12">
         <div className="mb-8">
           <Link
-            to="/members"
+            to={`/union/${slug}/members`}
             className="text-primary-600 hover:text-primary-900 text-sm font-medium mb-4 inline-block"
           >
             ← Back to Members
@@ -362,7 +410,7 @@ export default function EditMember() {
 
               <div className="flex justify-end space-x-4 pt-4">
                 <Link
-                  to="/members"
+                  to={`/union/${slug}/members`}
                   className="px-6 py-2 border border-primary-300 text-primary-700 rounded-md hover:bg-primary-50 transition"
                 >
                   Cancel

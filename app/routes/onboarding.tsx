@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { supabase, getSessionFromRequest } from '../utils/supabase';
 import { createClient } from '@supabase/supabase-js';
+import { generateUniqueSlug } from '../utils/unions';
 import type { Route } from './+types/onboarding';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
@@ -108,11 +109,15 @@ export async function action({ request }: Route.ActionArgs) {
       })
     : supabase;
 
+  // Generate unique slug from union name (use serverSupabase for auth context)
+  const slug = await generateUniqueSlug(name.trim(), serverSupabase);
+
   // Create the union
   const { data: union, error: unionError } = await serverSupabase
     .from('unions')
     .insert([{
       name: name.trim(),
+      slug: slug,
       description: description?.trim() || null,
       created_by: userId,
     }])
@@ -133,7 +138,7 @@ export async function action({ request }: Route.ActionArgs) {
     );
   }
 
-  return redirect('/dashboard');
+  return redirect(`/union/${union.slug}`);
 }
 
 export default function Onboarding() {
@@ -187,7 +192,7 @@ export default function Onboarding() {
               Union Simple
             </Link>
             <Link
-              to="/dashboard"
+              to="/"
               className="text-sm text-primary-700 hover:text-primary-900"
             >
               Skip for now

@@ -29,10 +29,12 @@ export function UnionDropdown({ unions, currentUnionId, onUnionSelect }: UnionDr
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const handleUnionSelect = (unionId: string) => {
+  const handleUnionSelect = (union: Union) => {
     if (onUnionSelect) {
-      onUnionSelect(unionId);
+      onUnionSelect(union.id);
     }
+    // Navigate to the union's dashboard using slug
+    navigate(`/union/${union.slug}`);
     setIsOpen(false);
   };
 
@@ -64,7 +66,7 @@ export function UnionDropdown({ unions, currentUnionId, onUnionSelect }: UnionDr
               unions.map((union) => (
                 <button
                   key={union.id}
-                  onClick={() => handleUnionSelect(union.id)}
+                  onClick={() => handleUnionSelect(union)}
                   className={`w-full text-left px-4 py-2 text-sm transition ${
                     union.id === currentUnionId
                       ? 'bg-primary-50 text-primary-900 font-medium'

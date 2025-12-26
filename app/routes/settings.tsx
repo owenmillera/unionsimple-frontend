@@ -2,6 +2,7 @@ import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useEffect, useState } from 'react';
 import { supabase } from '../utils/supabase';
+import { getFirstUnionSlug } from '../utils/unions';
 import type { Route } from './+types/settings';
 
 export function meta({}: Route.MetaArgs) {
@@ -75,8 +76,13 @@ export default function Settings() {
       if (data?.user) {
         setSuccess(true);
         // Redirect to dashboard after a short delay
-        setTimeout(() => {
-          navigate('/dashboard');
+        setTimeout(async () => {
+          const slug = await getFirstUnionSlug(data.user.id);
+          if (slug) {
+            navigate(`/union/${slug}`);
+          } else {
+            navigate('/onboarding');
+          }
         }, 1500);
       } else {
         setError('Failed to update user information');
@@ -110,10 +116,10 @@ export default function Settings() {
               Union Simple
             </Link>
             <Link
-              to="/dashboard"
+              to="/"
               className="text-sm text-primary-700 hover:text-primary-900"
             >
-              ← Back to Dashboard
+              ← Back to Home
             </Link>
           </div>
         </div>
@@ -218,7 +224,7 @@ export default function Settings() {
                 {submitting ? 'Updating...' : success ? 'Updated!' : 'Update Information'}
               </button>
               <Link
-                to="/dashboard"
+                to="/"
                 className="px-6 py-3 border border-primary-300 text-primary-700 rounded-md hover:bg-primary-50 transition font-medium text-lg"
               >
                 Cancel

@@ -1,6 +1,8 @@
 import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { useState, useEffect } from 'react';
+import { getFirstUnionSlug } from '../utils/unions';
+import { supabase } from '../utils/supabase';
 import type { Route } from './+types/signup';
 
 export function meta({}: Route.MetaArgs) {
@@ -22,10 +24,18 @@ export default function SignUp() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Only redirect if user is confirmed (has email_confirmed_at)
-    if (user && user.email_confirmed_at) {
-      navigate('/dashboard');
-    }
+    const redirectToDashboard = async () => {
+      // Only redirect if user is confirmed (has email_confirmed_at)
+      if (user && user.email_confirmed_at) {
+        const slug = await getFirstUnionSlug(user.id);
+        if (slug) {
+          navigate(`/union/${slug}`);
+        } else {
+          navigate('/onboarding');
+        }
+      }
+    };
+    redirectToDashboard();
   }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -60,8 +70,18 @@ export default function SignUp() {
         // User is automatically signed in (email confirmation disabled)
         setSuccess(true);
         setSuccessMessage('Account created successfully! Redirecting...');
-        setTimeout(() => {
-          navigate('/dashboard');
+        setTimeout(async () => {
+          const { data: { user: signedInUser } } = await supabase.auth.getUser();
+          if (signedInUser) {
+            const slug = await getFirstUnionSlug(signedInUser.id);
+            if (slug) {
+              navigate(`/union/${slug}`);
+            } else {
+              navigate('/onboarding');
+            }
+          } else {
+            navigate('/onboarding');
+          }
         }, 1500);
       } else {
         // No session means email confirmation is required
