@@ -1,13 +1,9 @@
 import { Form, Link, useNavigate, redirect, useActionData } from 'react-router';
 import { useAuth } from '../context/AuthContext';
-import { useEffect, useState } from 'react';
-import { supabase, getSessionFromRequest } from '../utils/supabase';
-import { createClient } from '@supabase/supabase-js';
+import { useEffect } from 'react';
+import { createClient, getResponseHeaders } from '../utils/supabase/server';
 import { generateUniqueSlug } from '../utils/unions';
 import type { Route } from './+types/onboarding';
-
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -19,56 +15,28 @@ export function meta({}: Route.MetaArgs) {
 export async function loader({ request }: Route.LoaderArgs) {
   // Don't redirect here - let the client-side auth check handle it
   // This prevents the flash of redirect when session is in localStorage
-  const session = await getSessionFromRequest(request);
+  const supabaseClient = await createClient(request);
+  const { data: { user } } = await supabaseClient.auth.getUser();
+  const responseHeaders = getResponseHeaders(supabaseClient);
   
   return new Response(
-    JSON.stringify({ user: session?.user || null }),
-    { headers: { 'Content-Type': 'application/json' } }
+    JSON.stringify({ user: user || null }),
+    { 
+      headers: { 
+        'Content-Type': 'application/json',
+        ...Object.fromEntries(responseHeaders)
+      } 
+    }
   );
 }
 
 export async function action({ request }: Route.ActionArgs) {
   const formData = await request.formData();
+  const supabaseClient = await createClient(request);
+  const { data: { user } } = await supabaseClient.auth.getUser();
+  const responseHeaders = getResponseHeaders(supabaseClient);
   
-  // Try to get access token from form data first (sent from client)
-  const accessTokenFromForm = formData.get('access_token') as string | null;
-  
-  let session: any = null;
-  let userId: string | null = null;
-  let accessToken: string | null = accessTokenFromForm;
-  
-  // If we have an access token from the form, use it
-  if (accessTokenFromForm) {
-    const serverSupabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${accessTokenFromForm}`,
-        },
-      },
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-    
-    const { data: { user }, error } = await serverSupabase.auth.getUser();
-    if (user && !error) {
-      session = { user, access_token: accessTokenFromForm };
-      userId = user.id;
-    }
-  }
-  
-  // Fallback: try to get session from request cookies
-  if (!session || !userId) {
-    const sessionFromRequest = await getSessionFromRequest(request);
-    if (sessionFromRequest?.user) {
-      session = sessionFromRequest;
-      userId = sessionFromRequest.user.id;
-      accessToken = (sessionFromRequest as any).access_token || accessToken;
-    }
-  }
-  
-  if (!session || !userId) {
+  if (!user) {
     return new Response(
       JSON.stringify({ 
         error: 'Unauthorized', 
@@ -76,7 +44,10 @@ export async function action({ request }: Route.ActionArgs) {
       }),
       { 
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...Object.fromEntries(responseHeaders)
+        }
       }
     );
   }
@@ -89,37 +60,25 @@ export async function action({ request }: Route.ActionArgs) {
       JSON.stringify({ error: 'Union name is required' }),
       { 
         status: 400,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...Object.fromEntries(responseHeaders)
+        }
       }
     );
   }
 
-  // Create a Supabase client with the access token
-  const serverSupabase = accessToken 
-    ? createClient(supabaseUrl, supabaseAnonKey, {
-        global: {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      })
-    : supabase;
-
-  // Generate unique slug from union name (use serverSupabase for auth context)
-  const slug = await generateUniqueSlug(name.trim(), serverSupabase);
+  // Generate unique slug from union name
+  const slug = await generateUniqueSlug(name.trim(), supabaseClient);
 
   // Create the union
-  const { data: union, error: unionError } = await serverSupabase
+  const { data: union, error: unionError } = await supabaseClient
     .from('unions')
     .insert([{
       name: name.trim(),
       slug: slug,
       description: description?.trim() || null,
-      created_by: userId,
+      created_by: user.id,
     }])
     .select()
     .single();
@@ -133,7 +92,10 @@ export async function action({ request }: Route.ActionArgs) {
       }),
       { 
         status: 400,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          ...Object.fromEntries(responseHeaders)
+        }
       }
     );
   }
@@ -142,10 +104,9 @@ export async function action({ request }: Route.ActionArgs) {
 }
 
 export default function Onboarding() {
-  const { user, loading, session } = useAuth();
+  const { user, loading } = useAuth();
   const navigate = useNavigate();
   const actionData = useActionData<typeof action>();
-  const [accessToken, setAccessToken] = useState<string | null>(null);
 
   useEffect(() => {
     // Only redirect after loading is complete and we're sure user is not logged in
@@ -153,22 +114,6 @@ export default function Onboarding() {
       navigate('/signin');
     }
   }, [user, loading, navigate]);
-
-  // Get access token from session
-  useEffect(() => {
-    const getAccessToken = async () => {
-      if (session?.access_token) {
-        setAccessToken(session.access_token);
-      } else if (user) {
-        // Fallback: get session directly from Supabase
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-        if (currentSession?.access_token) {
-          setAccessToken(currentSession.access_token);
-        }
-      }
-    };
-    getAccessToken();
-  }, [session, user]);
 
   if (loading) {
     return (
@@ -223,19 +168,7 @@ export default function Onboarding() {
             </div>
           )}
 
-          {/* Warning if access token not available */}
-          {!accessToken && user && (
-            <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-md">
-              <p className="text-sm text-yellow-800">
-                Loading authentication... Please wait a moment before submitting.
-              </p>
-            </div>
-          )}
-
           <Form method="post" className="space-y-6">
-            {accessToken && (
-              <input type="hidden" name="access_token" value={accessToken} />
-            )}
             <div>
               <label
                 htmlFor="name"
@@ -279,8 +212,7 @@ export default function Onboarding() {
             <div className="pt-4">
               <button
                 type="submit"
-                disabled={!accessToken}
-                className="w-full px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition font-medium text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full px-6 py-3 bg-primary-900 text-white rounded-md hover:bg-primary-950 transition font-medium text-lg"
               >
                 Create Union
               </button>
